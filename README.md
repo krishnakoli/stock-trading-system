@@ -5,15 +5,50 @@ A production-inspired Event Driven Microservices application built using Spring 
 ## Architecture
 
 ```
-                API Gateway
-                     │
-                     ▼
-              Order Service
-                     │
-              Kafka Broker
-      ┌──────────┼───────────┐
-      ▼          ▼           ▼
- Risk Service Portfolio Service Notification Service
+                    ┌──────────────────┐
+                    │   Client/API     │
+                    └────────┬─────────┘
+                             │
+                             ▼
+                    ┌──────────────────┐
+                    │  Order Service   │
+                    │   Port: 8080     │
+                    └────────┬─────────┘
+                             │
+                    1. Save Order
+                             │
+                             ▼
+                      Kafka: trade-order
+                             │
+                             ▼
+                    ┌──────────────────┐
+                    │   Risk Service   │
+                    │   Port: 8081     │
+                    └────────┬─────────┘
+                             │
+                    2. Validate Risk
+                      ┌──────┴──────┐
+                      │             │
+                      ▼             ▼
+             risk-approved     risk-rejected
+                      │             │
+                      ▼             ▼
+             ┌──────────────┐  Notification
+             │   Portfolio  │
+             │   Service    │
+             │   8082       │
+             └──────┬───────┘
+                    │
+             3. Update Portfolio
+                    │
+                    ▼
+             portfolio-update-info
+                    │
+                    ▼
+             ┌──────────────────┐
+             │ Notification     │
+             │ Service :8083    │
+             └──────────────────┘
 ```
 
 ## Tech Stack
