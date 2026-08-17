@@ -1,169 +1,362 @@
-version: "3.9"
 
-services:
+  services:
 
-  #################################################
-  # PostgreSQL
-  #################################################
-  postgres:
-    image: postgres:16
-    container_name: postgres
-    restart: always
+    # =========================================================
+    # POSTGRESQL
+    # =========================================================
 
-    environment:
-      POSTGRES_DB: stockdb
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+    postgres:
+      image: postgres:16
+      container_name: postgres
+      environment:
+        POSTGRES_DB: stockdb
+        POSTGRES_USER: postgres
+        POSTGRES_PASSWORD: postgres
+      ports:
+        - "5432:5432"
+      volumes:
+        - postgres-data:/var/lib/postgresql/data
 
-    ports:
-      - "5432:5432"
 
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
+    # =========================================================
+    # ZOOKEEPER
+    # =========================================================
 
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d stockdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    zookeeper:
+      image: confluentinc/cp-zookeeper:7.6.0
+      container_name: zookeeper
+      environment:
+        ZOOKEEPER_CLIENT_PORT: 2181
+        ZOOKEEPER_TICK_TIME: 2000
 
-  #################################################
-  # Kafka (KRaft Mode)
-  #################################################
-  kafka:
-    image: apache/kafka:3.9.0
-    container_name: kafka
-    restart: always
 
-    ports:
-      - "9092:9092"
+    # =========================================================
+    # KAFKA
+    # =========================================================
 
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    kafka:
+      image: confluentinc/cp-kafka:7.6.0
+      container_name: kafka
 
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9092"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      depends_on:
+        - zookeeper
 
-  #################################################
-  # Order Service
-  #################################################
-  order-service:
-    build:
-      context: ./services/order-service
+      ports:
+        - "9092:9092"
 
-    container_name: order-service
+      environment:
+        KAFKA_BROKER_ID: 1
 
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
+        KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
 
-    ports:
-      - "8081:8081"
+        KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
 
-    environment:
-      SERVER_PORT: 8081
+        KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
 
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stockdb
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: postgres
+        KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
 
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+        KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
 
-      DDL_AUTO: update
-      SHOW_SQL: true
+        KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
-  #################################################
-  # Risk Service
-  #################################################
-  risk-service:
-    build:
-      context: ./services/risk-service
+        KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
-    container_name: risk-service
 
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
+    # =========================================================
+    # EUREKA DISCOVERY SERVER
+    # =========================================================
 
-    ports:
-      - "8082:8082"
+    eureka:
+      build: ../discovery-server
+      container_name: discovery-server
 
-    environment:
-      SERVER_PORT: 8082
+      ports:
+        - "8761:8761"
 
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stockdb
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: postgres
 
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    # =========================================================
+    # API GATEWAY
+    # =========================================================
 
-      DDL_AUTO: update
-      SHOW_SQL: true
+    gateway:
+      build: ../api-gateway
+      container_name: api-gateway
 
-  #################################################
-  # Portfolio Service
-  #################################################
-  portfolio-service:
-    build:
-      context: ./services/portfolio-service
+      ports:
+        - "8080:8080"
 
-    container_name: portfolio-service
+      depends_on:
+        - eureka
 
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
 
-    ports:
-      - "8083:8083"
+    # =========================================================
+    # ORDER SERVICE - 3 REPLICAS
+    # =========================================================
 
-    environment:
-      SERVER_PORT: 8083
+    order1:
+      build: ../services/order-service
+      container_name: order1
 
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stockdb
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: postgres
+      environment:
+        SERVER_PORT: 8081
 
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+        SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stockdb
+        SPRING_DATASOURCE_USERNAME: postgres
+        SPRING_DATASOURCE_PASSWORD: postgres
 
-      DDL_AUTO: update
-      SHOW_SQL: true
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
 
-  #################################################
-  # Notification Service
-  #################################################
-  notification-service:
-    build:
-      context: ./services/notification-service
+        EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:8761/eureka/
+        EUREKA_INSTANCE_INSTANCE_ID: order1
 
-    container_name: notification-service
+      depends_on:
+        - postgres
+        - kafka
+        - eureka
 
-    depends_on:
-      kafka:
-        condition: service_healthy
 
-    ports:
-      - "8084:8084"
+    order2:
+      build: ../services/order-service
+      container_name: order2
 
-    environment:
-      SERVER_PORT: 8084
+      environment:
+        SERVER_PORT: 8081
 
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+        SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stockdb
+        SPRING_DATASOURCE_USERNAME: postgres
+        SPRING_DATASOURCE_PASSWORD: postgres
 
-volumes:
-  postgres-data:
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+        EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:8761/eureka/
+        EUREKA_INSTANCE_INSTANCE_ID: order2
+
+      depends_on:
+        - postgres
+        - kafka
+        - eureka
+
+
+    order3:
+      build: ../services/order-service
+      container_name: order3
+
+      environment:
+        SERVER_PORT: 8081
+
+        SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stockdb
+        SPRING_DATASOURCE_USERNAME: postgres
+        SPRING_DATASOURCE_PASSWORD: postgres
+
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+        EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:8761/eureka/
+        EUREKA_INSTANCE_INSTANCE_ID: order3
+
+      depends_on:
+        - postgres
+        - kafka
+        - eureka
+
+
+    # =========================================================
+    # RISK SERVICE - 3 REPLICAS
+    # =========================================================
+
+    risk1:
+      build: ../services/risk-service
+      container_name: risk1
+
+      environment:
+        SERVER_PORT: 8082
+
+        SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stockdb
+        SPRING_DATASOURCE_USERNAME: postgres
+        SPRING_DATASOURCE_PASSWORD: postgres
+
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+        EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:8761/eureka/
+        EUREKA_INSTANCE_INSTANCE_ID: risk1
+
+      depends_on:
+        - postgres
+        - kafka
+        - eureka
+
+
+    risk2:
+      build: ../services/risk-service
+      container_name: risk2
+
+      environment:
+        SERVER_PORT: 8082
+
+        SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stockdb
+        SPRING_DATASOURCE_USERNAME: postgres
+        SPRING_DATASOURCE_PASSWORD: postgres
+
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+        EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:8761/eureka/
+        EUREKA_INSTANCE_INSTANCE_ID: risk2
+
+      depends_on:
+        - postgres
+        - kafka
+        - eureka
+
+
+    risk3:
+      build: ../services/risk-service
+      container_name: risk3
+
+      environment:
+        SERVER_PORT: 8082
+
+        SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stockdb
+        SPRING_DATASOURCE_USERNAME: postgres
+        SPRING_DATASOURCE_PASSWORD: postgres
+
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+        EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:8761/eureka/
+        EUREKA_INSTANCE_INSTANCE_ID: risk3
+
+      depends_on:
+        - postgres
+        - kafka
+        - eureka
+
+
+    # =========================================================
+    # PORTFOLIO SERVICE - 3 REPLICAS
+    # =========================================================
+
+    portfolio1:
+      build: ../services/portfolio-service
+      container_name: portfolio1
+
+      environment:
+        SERVER_PORT: 8083
+
+        SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stockdb
+        SPRING_DATASOURCE_USERNAME: postgres
+        SPRING_DATASOURCE_PASSWORD: postgres
+
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+        EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:8761/eureka/
+        EUREKA_INSTANCE_INSTANCE_ID: portfolio1
+
+      depends_on:
+        - postgres
+        - kafka
+        - eureka
+
+
+    portfolio2:
+      build: ../services/portfolio-service
+      container_name: portfolio2
+
+      environment:
+        SERVER_PORT: 8083
+
+        SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stockdb
+        SPRING_DATASOURCE_USERNAME: postgres
+        SPRING_DATASOURCE_PASSWORD: postgres
+
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+        EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:8761/eureka/
+        EUREKA_INSTANCE_INSTANCE_ID: portfolio2
+
+      depends_on:
+        - postgres
+        - kafka
+        - eureka
+
+
+    portfolio3:
+      build: ../services/portfolio-service
+      container_name: portfolio3
+
+      environment:
+        SERVER_PORT: 8083
+
+        SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stockdb
+        SPRING_DATASOURCE_USERNAME: postgres
+        SPRING_DATASOURCE_PASSWORD: postgres
+
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+        EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:8761/eureka/
+        EUREKA_INSTANCE_INSTANCE_ID: portfolio3
+
+      depends_on:
+        - postgres
+        - kafka
+        - eureka
+
+
+    # =========================================================
+    # NOTIFICATION SERVICE - 3 REPLICAS
+    # =========================================================
+
+    notification1:
+      build: ../services/notification-service
+      container_name: notification1
+
+      environment:
+        SERVER_PORT: 8084
+
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+        EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:8761/eureka/
+        EUREKA_INSTANCE_INSTANCE_ID: notification1
+
+      depends_on:
+        - kafka
+        - eureka
+
+
+    notification2:
+      build: ../services/notification-service
+      container_name: notification2
+
+      environment:
+        SERVER_PORT: 8084
+
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+        EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:8761/eureka/
+        EUREKA_INSTANCE_INSTANCE_ID: notification2
+
+      depends_on:
+        - kafka
+        - eureka
+
+
+    notification3:
+      build: ../services/notification-service
+      container_name: notification3
+
+      environment:
+        SERVER_PORT: 8084
+
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+        EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:8761/eureka/
+        EUREKA_INSTANCE_INSTANCE_ID: notification3
+
+      depends_on:
+        - kafka
+        - eureka
+
+
+  # ===========================================================
+  # PERSISTENT VOLUMES
+  # ===========================================================
+
+  volumes:
+    postgres-data:
