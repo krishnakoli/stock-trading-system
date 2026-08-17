@@ -1,76 +1,148 @@
 # Stock Trading System
 
-A production-inspired Event Driven Microservices application built using Spring Boot, Kafka, PostgreSQL, Redis, and Spring Cloud.
+A production-inspired **Event-Driven Microservices** application built using
+Spring Boot, Apache Kafka, PostgreSQL, Spring Cloud Gateway, Eureka,
+Docker, and Maven.
 
-## Architecture
+The project demonstrates how a distributed trading workflow can be designed
+using **Microservices, Event-Driven Architecture, Service Discovery,
+Client-Side Load Balancing, API Gateway, Containerization, and
+Fault-Tolerant communication patterns.**
 
-```
-                    ┌──────────────────┐
-                    │   Client/API     │
-                    └────────┬─────────┘
-                             │
-                             ▼
-                    ┌──────────────────┐
-                    │  Order Service   │
-                    │   Port: 8080     │
-                    └────────┬─────────┘
-                             │
-                    1. Save Order
-                             │
-                             ▼
-                      Kafka: trade-order
-                             │
-                             ▼
-                    ┌──────────────────┐
-                    │   Risk Service   │
-                    │   Port: 8081     │
-                    └────────┬─────────┘
-                             │
-                    2. Validate Risk
-                      ┌──────┴──────┐
-                      │             │
-                      ▼             ▼
-             risk-approved     risk-rejected
-                      │             │
-                      ▼             ▼
-             ┌──────────────┐  Notification
-             │   Portfolio  │
-             │   Service    │
-             │   8082       │
-             └──────┬───────┘
-                    │
-             3. Update Portfolio
-                    │
-                    ▼
-             portfolio-update-info
-                    │
-                    ▼
-             ┌──────────────────┐
-             │ Notification     │
-             │ Service :8083    │
-             └──────────────────┘
-```
+---
 
-## Tech Stack
+# Architecture
 
-- Java 21
-- Spring Boot
-- Spring Data JPA
-- PostgreSQL
-- Apache Kafka
-- Redis
-- Spring Cloud Gateway
-- Docker
-- Maven
+```text
+                             ┌──────────────────┐
+                             │      Client      │
+                             └────────┬─────────┘
+                                      │
+                                      │ HTTP
+                                      ▼
+                           ┌─────────────────────┐
+                           │     API Gateway     │
+                           │       :8080         │
+                           │                     │
+                           │ • Routing           │
+                           │ • CORS              │
+                           │ • Logging           │
+                           │ • Correlation ID    │
+                           │ • Rate Limiting     │
+                           │ • Exception Handler │
+                           └──────────┬──────────┘
+                                      │
+                                      │ lb://SERVICE
+                                      ▼
+                         ┌─────────────────────────┐
+                         │      Eureka Server      │
+                         │         :8761           │
+                         │                         │
+                         │   Service Discovery     │
+                         └───────────┬─────────────┘
+                                     │
+                 ┌───────────────────┼───────────────────┐
+                 │                   │                   │
+                 ▼                   ▼                   ▼
 
-## Services
+        ┌────────────────┐  ┌────────────────┐  ┌────────────────┐
+        │ Order Service  │  │  Risk Service  │  │Portfolio Service│
+        │                │  │                │  │                │
+        │ Order #1       │  │ Risk #1        │  │ Portfolio #1   │
+        │ Order #2       │  │ Risk #2        │  │ Portfolio #2   │
+        │ Order #3       │  │ Risk #3        │  │ Portfolio #3   │
+        └───────┬────────┘  └────────────────┘  └────────────────┘
+                │
+                │
+                ▼
+        ┌──────────────────────────────────────────┐
+        │                  Kafka                   │
+        │                                          │
+        │ trade-order                              │
+        │ risk-approved                            │
+        │ risk-rejected                            │
+        │ portfolio-update-info                    │
+        └──────────────────────────────────────────┘
+                │
+                │
+                ▼
+        ┌───────────────────────┐
+        │ Notification Service  │
+        │                       │
+        │ Notification #1       │
+        │ Notification #2       │
+        │ Notification #3       │
+        └───────────────────────┘
 
-- Order Service
-- Risk Service
-- Portfolio Service
-- Notification Service
-- API Gateway
 
-## Status
+        ┌──────────────────────┐
+        │      PostgreSQL      │
+        │                      │
+        │ Order Data           │
+        │ Portfolio Data       │
+        │ Risk Data            │
+        └──────────────────────┘
 
-🚧 Under Development
+
+        ┌──────────────────────┐
+        │       Docker         │
+        │                      │
+        │ Containers           │
+        │ Networking           │
+        │ Service Isolation    │
+        │ Infrastructure       │
+        └──────────────────────┘
+        
+End-to-End Order Flow
+
+The application follows an event-driven trading workflow.
+
+Client
+  │
+  │ POST /orders
+  ▼
+API Gateway
+  │
+  │ Route request
+  ▼
+Order Service
+  │
+  ├── Validate request
+  │
+  ├── Persist Order
+  │
+  └── Publish OrderPlacedEvent
+          │
+          ▼
+       Kafka
+   trade-order
+          │
+          ▼
+     Risk Service
+          │
+          ├── Symbol Validation
+          ├── Quantity Validation
+          └── Market Hours Validation
+          │
+          ├───────────────┐
+          │               │
+          ▼               ▼
+    risk-approved    risk-rejected
+          │               │
+          ▼               ▼
+   Portfolio Service   Notification
+          │
+          │
+          ▼
+   Portfolio Updated
+          │
+          ▼
+   Portfolio Event
+          │
+          ▼
+   Notification Service
+
+The important architectural principle is that services do not need to
+directly call each other for the main business workflow.
+
+Instead, they communicate through Kafka events.
